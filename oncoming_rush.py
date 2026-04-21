@@ -232,7 +232,7 @@ class Road:
         gap_length = 40
         total_cycle = dash_length + gap_length
         
-        for lane in range(1, Config.LANE_COUNT):
+        for lane in range(1, Config.NUM_LANES):
             x = Config.ROAD_X + lane * Config.LANE_WIDTH
             # Start drawing from above the screen to ensure continuous appearance
             start_y = -total_cycle + self.line_offset
@@ -641,7 +641,7 @@ class EnemySpawner:
         # Find available lanes (not blocked in top zone)
         available_lanes = []
         
-        for lane in range(Config.LANE_COUNT):
+        for lane in range(Config.NUM_LANES):
             # Check if this lane is blocked in the top zone
             is_blocked = False
             
