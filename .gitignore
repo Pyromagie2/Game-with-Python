@@ -27,5 +27,10 @@ node_modules/
 # Build artifacts
 dist/
 build/
-target/
+*.o
+*.obj
+*.so
+*.a
+*.dll
+*.exe
 ```
