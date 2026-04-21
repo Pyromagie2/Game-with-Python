@@ -45,8 +45,8 @@ class Config:
     # Speed settings
     BASE_SPEED = 150  # px/s
     MAX_SPEED = 1300  # px/s
-    SPEED_CURVE_EXPONENT = 1.6
-    SPEED_NORM_TIME = 1800  # 30 minutes in seconds
+    SPEED_CURVE_EXPONENT = 1.0  # Linear curve for steady difficulty increase
+    SPEED_NORM_TIME = 60  # 1 minute - game reaches ~2x speed at this point
     
     # Player settings
     PLAYER_WIDTH = 50
@@ -170,9 +170,16 @@ def save_highscore(filepath: str, score: int) -> None:
 
 
 def get_current_speed(elapsed_seconds: float) -> float:
-    """Calculate current speed based on elapsed time using non-linear formula"""
-    t = min(elapsed_seconds / Config.SPEED_NORM_TIME, 1.0)
-    return Config.BASE_SPEED + (Config.MAX_SPEED - Config.BASE_SPEED) * (t ** Config.SPEED_CURVE_EXPONENT)
+    """Calculate current speed based on elapsed time using linear formula.
+    
+    After SPEED_NORM_TIME seconds (60s), speed reaches approximately 2x BASE_SPEED.
+    This creates a steady difficulty increase where the game becomes twice as fast
+    after 1 minute of play.
+    """
+    # Linear increase: speed = BASE_SPEED + (BASE_SPEED * elapsed / NORM_TIME)
+    # At t=60s: speed = 150 + (150 * 60/60) = 300 px/s (2x base speed)
+    speed_increase = Config.BASE_SPEED * (elapsed_seconds / Config.SPEED_NORM_TIME)
+    return min(Config.BASE_SPEED + speed_increase, Config.MAX_SPEED)
 
 
 def get_spawn_interval(speed: float) -> float:
