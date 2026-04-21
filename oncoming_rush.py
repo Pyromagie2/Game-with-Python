@@ -428,15 +428,87 @@ class EnemySpawner:
         
         if self.spawn_timer >= spawn_interval:
             self.spawn_timer = 0.0
-            enemy = self._try_spawn(speed, elapsed_time)
-            if enemy:
+            enemies = self._try_spawn_multiple(speed, elapsed_time)
+            for enemy in enemies:
                 self.enemies.append(enemy)
                 newly_spawned.append(enemy)
                 
         return newly_spawned
+    
+    def _try_spawn_multiple(self, speed: float, elapsed_time: float) -> List[Enemy]:
+        """Try to spawn one or multiple enemies side by side"""
+        import random
         
+        # Determine how many cars to spawn (1, 2, or 3)
+        # Higher chance for single cars, lower for multiple
+        rand = random.random()
+        if rand < 0.55:  # 55% chance for 1 car
+            count = 1
+        elif rand < 0.85:  # 30% chance for 2 cars
+            count = 2
+        else:  # 15% chance for 3 cars
+            count = 3
+        
+        # Calculate minimum spawn Y to ensure reaction time
+        min_reaction_distance = speed * Config.MIN_REACTION_TIME
+        spawn_y = -min_reaction_distance - 50  # Spawn above screen with buffer
+        
+        # Find available lanes (not blocked in top zone)
+        available_lanes = []
+        
+        for lane in range(Config.LANE_COUNT):
+            # Check if this lane is blocked in the top zone
+            is_blocked = False
+            
+            for enemy in self.enemies:
+                if enemy.lane == lane and enemy.y < Config.TOP_BLOCKED_ZONE_Y:
+                    is_blocked = True
+                    break
+                    
+            if not is_blocked:
+                available_lanes.append(lane)
+        
+        # Must have at least one free lane in top zone
+        if len(available_lanes) == 0:
+            return []
+        
+        # Also check minimum distance on same lane
+        valid_lanes = []
+        for lane in available_lanes:
+            is_valid = True
+            
+            for enemy in self.enemies:
+                if enemy.lane == lane:
+                    # Check if last spawned enemy on this lane is far enough
+                    if enemy.y < Config.MIN_SPAWN_DISTANCE_SAME_LANE + abs(spawn_y):
+                        is_valid = False
+                        break
+                        
+            if is_valid:
+                valid_lanes.append(lane)
+        
+        if len(valid_lanes) == 0:
+            return []
+        
+        # Limit count to available valid lanes
+        actual_count = min(count, len(valid_lanes))
+        
+        # Choose random lanes for spawning
+        chosen_lanes = random.sample(valid_lanes, actual_count)
+        
+        # Spawn enemies on chosen lanes
+        spawned_enemies = []
+        for lane in chosen_lanes:
+            # Choose enemy type (20% chance for truck)
+            enemy_type = Enemy.TYPE_TRUCK if random.random() < 0.2 else Enemy.TYPE_CAR
+            enemy = Enemy(lane, enemy_type, spawn_y)
+            self.last_spawn_positions[lane] = spawn_y
+            spawned_enemies.append(enemy)
+        
+        return spawned_enemies
+    
     def _try_spawn(self, speed: float, elapsed_time: float) -> Optional[Enemy]:
-        """Try to spawn a new enemy following all rules"""
+        """Try to spawn a new enemy following all rules (legacy method)"""
         # Calculate minimum spawn Y to ensure reaction time
         min_reaction_distance = speed * Config.MIN_REACTION_TIME
         spawn_y = -min_reaction_distance - 50  # Spawn above screen with buffer
