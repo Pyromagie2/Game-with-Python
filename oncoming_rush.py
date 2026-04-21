@@ -692,12 +692,23 @@ class Enemy:
             detection_distance = Config.AUTONOMOUS_LANE_CHANGE_DISTANCE * self.height
             if self.y > player_y - detection_distance and self.y < player_y:
                 # Car is in detection zone - may attempt lane change
+                # Only allow lane change if not already changing
                 if not self.is_changing_lane and random.random() < Config.AUTONOMOUS_LANE_CHANGE_CHANCE:
-                    # Try to change to adjacent lane
-                    if self.lane > 0:
-                        self._start_lane_change(self.lane - 1)
-                    elif self.lane < Config.NUM_LANES - 1:
-                        self._start_lane_change(self.lane + 1)
+                    # Try to change to adjacent lane (only one lane at a time)
+                    direction = random.choice([-1, 1])
+                    new_lane = self.lane + direction
+                    
+                    # Check bounds
+                    if 0 <= new_lane < Config.NUM_LANES:
+                        # Check if target lane is free (no other enemy too close)
+                        lane_free = True
+                        for other in []:  # Will be passed from spawner
+                            if other.lane == new_lane and abs(other.y - self.y) < self.height * 1.5:
+                                lane_free = False
+                                break
+                        
+                        if lane_free:
+                            self._start_lane_change(new_lane)
         
         # Update lane change animation
         if self.is_changing_lane:
@@ -1040,11 +1051,35 @@ class EnemySpawner:
         return enemy
         
     def update_enemies(self, dt: float, speed: float, player_y: float = None) -> None:
-        """Update all enemies and remove off-screen ones"""
+        """Update all enemies and remove off-screen ones. Also handle lane change collision avoidance."""
+        # First pass: update positions
         for enemy in self.enemies[:]:
             enemy.update(dt, speed, player_y)
             if enemy.is_off_screen():
                 self.enemies.remove(enemy)
+        
+        # Second pass: check for overlapping enemies and resolve
+        # This prevents cars from being inside each other after lane changes
+        self._resolve_enemy_overlaps()
+    
+    def _resolve_enemy_overlaps(self) -> None:
+        """Check for overlapping enemies and cancel lane changes if needed"""
+        for i, enemy1 in enumerate(self.enemies):
+            if not enemy1.is_changing_lane:
+                continue
+            
+            for j, enemy2 in enumerate(self.enemies):
+                if i >= j:
+                    continue
+                
+                # Check if enemies are too close vertically
+                if abs(enemy1.y - enemy2.y) < enemy1.height * 0.8:
+                    # Check if they would overlap after lane change
+                    if enemy1.target_lane == enemy2.lane or (enemy2.is_changing_lane and enemy1.target_lane == enemy2.target_lane):
+                        # Cancel lane change to prevent collision
+                        enemy1.is_changing_lane = False
+                        enemy1.lane_change_progress = 0.0
+                        enemy1.x = Config.ROAD_X + enemy1.lane * Config.LANE_WIDTH + Config.LANE_WIDTH // 2
                 
     def clear(self) -> None:
         """Clear all enemies"""
