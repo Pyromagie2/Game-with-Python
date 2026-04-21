@@ -21,8 +21,8 @@ class Config:
     # Road settings
     ROAD_WIDTH = 400
     ROAD_X = (WINDOW_WIDTH - ROAD_WIDTH) // 2  # Center the road
-    LANE_COUNT = 3
-    LANE_WIDTH = ROAD_WIDTH // LANE_COUNT
+    NUM_LANES = 3  # Configurable lane count
+    LANE_WIDTH = ROAD_WIDTH // NUM_LANES
     
     # Colors
     COLOR_GRASS = (34, 139, 34)
@@ -33,6 +33,7 @@ class Config:
     COLOR_PLAYER_WHEEL = (30, 30, 30)
     COLOR_ENEMY_CAR = (200, 50, 50)
     COLOR_ENEMY_TRUCK = (200, 150, 50)
+    COLOR_ENEMY_VAN = (150, 100, 200)
     COLOR_ENEMY_WINDSHIELD = (100, 100, 100)
     COLOR_HUD_TEXT = (255, 255, 255)
     COLOR_SPEEDOMETER_LOW = (50, 200, 50)
@@ -59,13 +60,53 @@ class Config:
     ENEMY_CAR_HEIGHT = 80
     ENEMY_TRUCK_WIDTH = 55
     ENEMY_TRUCK_HEIGHT = 120
+    ENEMY_VAN_WIDTH = 52
+    ENEMY_VAN_HEIGHT = 95
     MIN_SPAWN_DISTANCE_SAME_LANE = 250  # Minimum pixels between enemies on same lane
     MIN_REACTION_TIME = 1.5  # seconds
     TOP_BLOCKED_ZONE_Y = 200  # y < this value must have at least 1 free lane
     
     # Spawn timing (in seconds)
-    SPAWN_INTERVAL_START = 2.5
-    SPAWN_INTERVAL_MIN = 0.6
+    SPAWN_INTERVAL_BASE = 2.5   # Sekunden zwischen Spawns bei Startgeschwindigkeit
+    SPAWN_INTERVAL_MIN = 0.6    # Minimales Intervall bei Maximalgeschwindigkeit
+    
+    # Spawn probabilities (must sum to 1.0)
+    SPAWN_CHANCE_CAR = 0.65     # Wahrscheinlichkeit dass ein Spawn ein PKW ist
+    SPAWN_CHANCE_TRUCK = 0.25   # Wahrscheinlichkeit dass ein Spawn ein LKW ist
+    SPAWN_CHANCE_VAN = 0.10     # Wahrscheinlichkeit dass ein Spawn ein Van ist
+    
+    # Tank Event Configuration
+    TANK_EVENT_CHANCE_PER_MINUTE = 0.25  # Wahrscheinlichkeit pro Minute dass Event startet (0.0–1.0)
+    TANK_EVENT_COOLDOWN = 120            # Sekunden Mindestabstand zwischen zwei Tank-Events
+    TANK_EVENT_EARLIEST = 180            # Frühester Zeitpunkt in Sekunden ab dem Event möglich ist
+    
+    # Spieler-Bewegung im Event
+    TANK_MOVE_TO_CENTER_DURATION = 1.5   # Sekunden für Fahrt zur Bildschirmmitte
+    
+    # Tank
+    TANK_W = 90                          # Breite des Panzers in Pixeln
+    TANK_H = 110                         # Höhe des Panzers in Pixeln
+    TANK_SPEED = 80                      # px/s – Panzerbewegung nach oben
+    TANK_FIRE_INTERVAL = 1.8             # Sekunden zwischen Schüssen
+    TANK_COLOR = (70, 90, 50)            # Olivgrün
+    
+    # Projektile
+    BULLET_SPEED = 400                   # px/s
+    BULLET_W = 10                        # Breite
+    BULLET_H = 22                        # Höhe
+    BULLET_COLOR = (255, 200, 0)         # Gelb
+    
+    # Mauer
+    WALL_DELAY_AFTER_TANK = 20.0         # Sekunden nach Tank-Erscheinen bis Mauer erscheint
+    WALL_APPROACH_SPEED_FACTOR = 1.5     # Faktor auf aktuelle Spielgeschwindigkeit für Mauer-Bewegung
+    WALL_H = 40                          # Höhe der Mauer in Pixeln
+    WALL_COLOR = (140, 140, 150)         # Grau
+    RAMP_COLOR = (200, 160, 60)          # Goldgelb für Rampe
+    RAMP_W = 80                          # Breite der Rampe in der Mauer
+    
+    # Sprung
+    JUMP_DURATION = 1.2                  # Sekunden
+    JUMP_ARC_HEIGHT = 180                # Pixel
     
     # Level thresholds (in seconds)
     LEVEL_THRESHOLDS = [0, 60, 180, 360, 600, 900, 1200, 1500]  # 8 levels
@@ -82,6 +123,19 @@ class GameState(Enum):
     PLAYING = auto()
     PAUSED = auto()
     GAMEOVER = auto()
+    TANK_EVENT = auto()  # Special state for tank event
+
+
+# =============================================================================
+# TANK EVENT PHASES
+# =============================================================================
+class TankEventPhase(Enum):
+    TRIGGER_ANNOUNCEMENT = auto()   # Phase 1: Trigger & Ankündigung
+    MOVE_TO_CENTER = auto()         # Phase 2: Spieler fährt zur Mitte
+    TANK_APPEARS = auto()           # Phase 3: Tank erscheint und feuert
+    WALL_APPROACHING = auto()       # Phase 4: Mauer erscheint
+    JUMP_SEQUENCE = auto()          # Phase 5: Sprung über die Mauer
+    RETURN_AND_END = auto()         # Phase 6: Rückkehr & Ende des Events
 
 
 # =============================================================================
@@ -124,7 +178,7 @@ def get_current_speed(elapsed_seconds: float) -> float:
 def get_spawn_interval(speed: float) -> float:
     """Calculate spawn interval based on current speed"""
     speed_ratio = (speed - Config.BASE_SPEED) / (Config.MAX_SPEED - Config.BASE_SPEED)
-    return Config.SPAWN_INTERVAL_START - speed_ratio * (Config.SPAWN_INTERVAL_START - Config.SPAWN_INTERVAL_MIN)
+    return Config.SPAWN_INTERVAL_BASE - speed_ratio * (Config.SPAWN_INTERVAL_BASE - Config.SPAWN_INTERVAL_MIN)
 
 
 def get_level(elapsed_seconds: float) -> int:
@@ -203,24 +257,35 @@ class Road:
 # =============================================================================
 class Player:
     def __init__(self):
-        self.current_lane = 1  # Start in middle lane (0, 1, 2)
-        self.target_lane = 1
+        self.current_lane = Config.NUM_LANES // 2  # Start in middle lane
+        self.target_lane = self.current_lane
         self.lane_change_progress = 0.0
         self.is_changing_lane = False
         
-        # Calculate center X positions for each lane
+        # Calculate center X positions for each lane (dynamically based on NUM_LANES)
         self.lane_center_x = [
             Config.ROAD_X + Config.LANE_WIDTH * lane + Config.LANE_WIDTH // 2
-            for lane in range(Config.LANE_COUNT)
+            for lane in range(Config.NUM_LANES)
         ]
         
         # Current X position (starts at middle lane center)
         self.x = self.lane_center_x[self.current_lane]
         self.y = Config.PLAYER_Y
         
-    def handle_input(self, keys: pygame.key.ScancodeWrapper) -> None:
+        # For tank event - automatic movement
+        self.auto_move_active = False
+        self.auto_move_target_x = None
+        self.auto_move_target_y = None
+        self.auto_move_start_x = None
+        self.auto_move_start_y = None
+        self.auto_move_duration = 0.0
+        self.auto_move_elapsed = 0.0
+        
+    def handle_input(self, keys: pygame.key.ScancodeWrapper, input_enabled: bool = True) -> None:
         """Handle player input for lane changes"""
-        if self.is_changing_lane:
+        if not input_enabled:
+            return
+        if self.is_changing_lane or self.auto_move_active:
             return
             
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
@@ -231,13 +296,47 @@ class Player:
     def _try_lane_change(self, direction: int) -> None:
         """Initiate a lane change if possible"""
         new_lane = self.current_lane + direction
-        if 0 <= new_lane < Config.LANE_COUNT:
+        if 0 <= new_lane < Config.NUM_LANES:
             self.target_lane = new_lane
             self.is_changing_lane = True
             self.lane_change_progress = 0.0
             
+    def start_auto_move_to_center(self, duration: float, target_y: float) -> None:
+        """Start automatic movement to center lane and target Y position"""
+        self.auto_move_active = True
+        self.auto_move_start_x = self.x
+        self.auto_move_start_y = self.y
+        self.auto_move_target_x = self.lane_center_x[Config.NUM_LANES // 2]
+        self.auto_move_target_y = target_y
+        self.auto_move_duration = duration
+        self.auto_move_elapsed = 0.0
+        
+    def update_auto_move(self, dt: float) -> bool:
+        """Update automatic movement. Returns True when complete."""
+        if not self.auto_move_active:
+            return True
+            
+        self.auto_move_elapsed += dt
+        progress = min(self.auto_move_elapsed / self.auto_move_duration, 1.0)
+        
+        # Smooth easing
+        eased = progress * progress * (3 - 2 * progress)
+        
+        self.x = self.auto_move_start_x + (self.auto_move_target_x - self.auto_move_start_x) * eased
+        self.y = self.auto_move_start_y + (self.auto_move_target_y - self.auto_move_start_y) * eased
+        
+        if progress >= 1.0:
+            self.auto_move_active = False
+            self.current_lane = Config.NUM_LANES // 2
+            return True
+        return False
+            
     def update(self, dt: float) -> None:
         """Update player state and lane change animation"""
+        if self.auto_move_active:
+            self.update_auto_move(dt)
+            return
+            
         if self.is_changing_lane:
             self.lane_change_progress += dt / Config.LANE_CHANGE_DURATION
             
@@ -317,6 +416,7 @@ class Player:
 class Enemy:
     TYPE_CAR = "car"
     TYPE_TRUCK = "truck"
+    TYPE_VAN = "van"
     
     def __init__(self, lane: int, enemy_type: str, spawn_y: float = -150):
         self.lane = lane
@@ -327,6 +427,10 @@ class Enemy:
             self.width = Config.ENEMY_TRUCK_WIDTH
             self.height = Config.ENEMY_TRUCK_HEIGHT
             self.color = Config.COLOR_ENEMY_TRUCK
+        elif enemy_type == self.TYPE_VAN:
+            self.width = Config.ENEMY_VAN_WIDTH
+            self.height = Config.ENEMY_VAN_HEIGHT
+            self.color = Config.COLOR_ENEMY_VAN
         else:
             self.width = Config.ENEMY_CAR_WIDTH
             self.height = Config.ENEMY_CAR_HEIGHT
@@ -439,8 +543,12 @@ class EnemySpawner:
         """Try to spawn one or multiple enemies side by side"""
         import random
         
-        # Determine how many cars to spawn (1, 2, or 3)
-        # Higher chance for single cars, lower for multiple
+        # Determine how many cars to spawn based on NUM_LANES
+        # Must always leave at least 1 free lane (or NUM_LANES-2 for >=4 lanes)
+        min_free_lanes = max(1, Config.NUM_LANES - 2) if Config.NUM_LANES >= 4 else 1
+        max_spawn_count = len(range(Config.NUM_LANES)) - min_free_lanes
+        
+        # Weighted random for spawn count
         rand = random.random()
         if rand < 0.55:  # 55% chance for 1 car
             count = 1
@@ -448,6 +556,9 @@ class EnemySpawner:
             count = 2
         else:  # 15% chance for 3 cars
             count = 3
+            
+        # Limit count to what's possible with free lane requirement
+        count = min(count, max_spawn_count, Config.NUM_LANES)
         
         # Calculate minimum spawn Y to ensure reaction time
         min_reaction_distance = speed * Config.MIN_REACTION_TIME
@@ -456,7 +567,7 @@ class EnemySpawner:
         # Find available lanes (not blocked in top zone)
         available_lanes = []
         
-        for lane in range(Config.LANE_COUNT):
+        for lane in range(Config.NUM_LANES):
             # Check if this lane is blocked in the top zone
             is_blocked = False
             
@@ -496,11 +607,18 @@ class EnemySpawner:
         # Choose random lanes for spawning
         chosen_lanes = random.sample(valid_lanes, actual_count)
         
-        # Spawn enemies on chosen lanes
+        # Spawn enemies on chosen lanes with configurable type probabilities
         spawned_enemies = []
         for lane in chosen_lanes:
-            # Choose enemy type (20% chance for truck)
-            enemy_type = Enemy.TYPE_TRUCK if random.random() < 0.2 else Enemy.TYPE_CAR
+            # Choose enemy type based on config probabilities
+            rand_type = random.random()
+            if rand_type < Config.SPAWN_CHANCE_CAR:
+                enemy_type = Enemy.TYPE_CAR
+            elif rand_type < Config.SPAWN_CHANCE_CAR + Config.SPAWN_CHANCE_TRUCK:
+                enemy_type = Enemy.TYPE_TRUCK
+            else:
+                enemy_type = Enemy.TYPE_VAN
+                
             enemy = Enemy(lane, enemy_type, spawn_y)
             self.last_spawn_positions[lane] = spawn_y
             spawned_enemies.append(enemy)
@@ -577,6 +695,148 @@ class EnemySpawner:
 
 
 # =============================================================================
+# TANK CLASS (for tank event)
+# =============================================================================
+class Tank:
+    def __init__(self):
+        self.width = Config.TANK_W
+        self.height = Config.TANK_H
+        self.x = Config.ROAD_X + Config.ROAD_WIDTH // 2  # Center of road
+        self.y = Config.WINDOW_HEIGHT + self.height  # Start below screen
+        self.target_y = Config.WINDOW_HEIGHT - 100  # Target position
+        self.move_speed = Config.TANK_SPEED
+        self.fire_timer = 0.0
+        self.active = False
+        
+    def update(self, dt: float) -> None:
+        """Move tank upward to target position"""
+        if not self.active:
+            return
+            
+        if self.y > self.target_y:
+            self.y -= self.move_speed * dt
+            
+    def can_fire(self) -> bool:
+        """Check if tank can fire"""
+        return self.active and self.y <= self.target_y
+        
+    def draw(self, screen: pygame.Surface) -> None:
+        """Draw the tank"""
+        # Main body
+        body_rect = pygame.Rect(
+            self.x - self.width // 2,
+            self.y - self.height // 2,
+            self.width,
+            self.height
+        )
+        pygame.draw.rect(screen, Config.TANK_COLOR, body_rect, border_radius=8)
+        
+        # Tank turret (circle on top)
+        turret_rect = pygame.Rect(
+            self.x - self.width // 4,
+            self.y - self.height // 2 - 15,
+            self.width // 2,
+            30
+        )
+        pygame.draw.rect(screen, (50, 70, 40), turret_rect, border_radius=5)
+        
+        # Tank barrel
+        barrel_rect = pygame.Rect(
+            self.x - 8,
+            self.y - self.height // 2 - 40,
+            16,
+            35
+        )
+        pygame.draw.rect(screen, (40, 60, 30), barrel_rect)
+        
+        # Tank tracks
+        track_width = 15
+        pygame.draw.rect(screen, (30, 30, 30),
+                        (self.x - self.width // 2 - track_width, self.y - self.height // 2 + 10,
+                         track_width, self.height - 20))
+        pygame.draw.rect(screen, (30, 30, 30),
+                        (self.x + self.width // 2, self.y - self.height // 2 + 10,
+                         track_width, self.height - 20))
+
+
+# =============================================================================
+# BULLET CLASS (tank projectiles)
+# =============================================================================
+class Bullet:
+    def __init__(self, x: float, y: float):
+        self.x = x
+        self.y = y
+        self.width = Config.BULLET_W
+        self.height = Config.BULLET_H
+        self.active = True
+        
+    def update(self, dt: float) -> None:
+        """Move bullet upward"""
+        self.y -= Config.BULLET_SPEED * dt
+        
+    def is_off_screen(self) -> bool:
+        """Check if bullet is off screen"""
+        return self.y < -self.height
+        
+    def get_hitbox(self) -> pygame.Rect:
+        """Get bullet hitbox"""
+        return pygame.Rect(
+            self.x - self.width // 2,
+            self.y - self.height // 2,
+            self.width,
+            self.height
+        )
+        
+    def draw(self, screen: pygame.Surface) -> None:
+        """Draw the bullet"""
+        pygame.draw.rect(screen, Config.BULLET_COLOR,
+                        (self.x - self.width // 2, self.y - self.height // 2,
+                         self.width, self.height), border_radius=3)
+
+
+# =============================================================================
+# WALL CLASS (ramp wall for tank event)
+# =============================================================================
+class Wall:
+    def __init__(self):
+        self.height = Config.WALL_H
+        self.width = Config.ROAD_WIDTH
+        self.x = Config.ROAD_X
+        self.y = -self.height  # Start above screen
+        self.active = False
+        self.speed_factor = Config.WALL_APPROACH_SPEED_FACTOR
+        
+    def update(self, dt: float, game_speed: float) -> None:
+        """Move wall downward"""
+        if self.active:
+            self.y += game_speed * self.speed_factor * dt
+            
+    def is_off_screen(self) -> bool:
+        """Check if wall is off screen"""
+        return self.y > Config.WINDOW_HEIGHT
+        
+    def get_ramp_rect(self) -> pygame.Rect:
+        """Get the ramp area rectangle"""
+        ramp_x = self.x + (self.width - Config.RAMP_W) // 2
+        return pygame.Rect(ramp_x, self.y, Config.RAMP_W, self.height)
+        
+    def draw(self, screen: pygame.Surface) -> None:
+        """Draw the wall with ramp"""
+        # Draw main wall
+        pygame.draw.rect(screen, Config.WALL_COLOR,
+                        (self.x, self.y, self.width, self.height))
+        
+        # Draw ramp (triangle shape in the middle)
+        ramp_x = self.x + (self.width - Config.RAMP_W) // 2
+        ramp_points = [
+            (ramp_x, self.y + self.height),  # Bottom left
+            (ramp_x + Config.RAMP_W // 2, self.y),  # Top center
+            (ramp_x + Config.RAMP_W, self.y + self.height)  # Bottom right
+        ]
+        pygame.draw.polygon(screen, Config.RAMP_COLOR, ramp_points)
+
+
+# =============================================================================
 # GAME CLASS
 # =============================================================================
 class Game:
@@ -607,6 +867,20 @@ class Game:
         self.player = Player()
         self.spawner = EnemySpawner()
         
+        # Tank event objects and state
+        self.tank = None
+        self.bullets: List[Bullet] = []
+        self.wall = None
+        self.tank_event_phase = None
+        self.tank_event_timer = 0.0
+        self.last_tank_event_time = -Config.TANK_EVENT_COOLDOWN  # Allow first event after earliest time
+        self.tank_announcement_text = ""
+        self.tank_announcement_timer = 0.0
+        self.jump_start_y = None
+        self.jump_elapsed = 0.0
+        self.event_escape_message = ""
+        self.event_escape_timer = 0.0
+        
         # For game over
         self.final_time = 0.0
         self.new_highscore = False
@@ -617,6 +891,182 @@ class Game:
         self.current_speed = Config.BASE_SPEED
         self.player = Player()
         self.spawner.clear()
+        self._reset_tank_event()
+        
+    def _reset_tank_event(self) -> None:
+        """Reset tank event state"""
+        self.tank = None
+        self.bullets = []
+        self.wall = None
+        self.tank_event_phase = None
+        self.tank_event_timer = 0.0
+        self.jump_start_y = None
+        self.jump_elapsed = 0.0
+        
+    def _check_trigger_tank_event(self, dt: float) -> bool:
+        """Check if tank event should be triggered"""
+        # Only check every 60 seconds (once per minute)
+        if self.elapsed_time < 60:
+            return False
+            
+        # Check cooldown and earliest time
+        time_since_last = self.elapsed_time - self.last_tank_event_time
+        if time_since_last < Config.TANK_EVENT_COOLDOWN:
+            return False
+        if self.elapsed_time < Config.TANK_EVENT_EARLIEST:
+            return False
+            
+        # Check if we're at a 60-second checkpoint (within this frame)
+        prev_time = self.elapsed_time - dt
+        prev_checkpoints = int(prev_time / 60)
+        curr_checkpoints = int(self.elapsed_time / 60)
+        
+        if curr_checkpoints > prev_checkpoints:
+            # We crossed a 60-second boundary - roll for event
+            import random
+            if random.random() < Config.TANK_EVENT_CHANCE_PER_MINUTE:
+                return True
+        return False
+        
+    def _start_tank_event(self) -> None:
+        """Start the tank event sequence"""
+        self.tank_event_phase = TankEventPhase.TRIGGER_ANNOUNCEMENT
+        self.tank_event_timer = 0.0
+        self.tank_announcement_text = "⚠ ACHTUNG – PANZER!"
+        self.tank_announcement_timer = 1.5
+        
+    def _update_tank_event(self, dt: float) -> None:
+        """Update tank event logic"""
+        if self.tank_event_phase is None:
+            return
+            
+        # Phase 1: Trigger & Announcement
+        if self.tank_event_phase == TankEventPhase.TRIGGER_ANNOUNCEMENT:
+            self.tank_announcement_timer -= dt
+            if self.tank_announcement_timer <= 0:
+                # Move to phase 2
+                self.tank_event_phase = TankEventPhase.MOVE_TO_CENTER
+                self.tank_event_timer = 0.0
+                self.player.start_auto_move_to_center(
+                    Config.TANK_MOVE_TO_CENTER_DURATION,
+                    Config.WINDOW_HEIGHT // 2
+                )
+                # Clear existing enemies
+                self.spawner.clear()
+                
+        # Phase 2: Move to center
+        elif self.tank_event_phase == TankEventPhase.MOVE_TO_CENTER:
+            self.tank_event_timer += dt
+            if self.player.update_auto_move(dt):
+                # Movement complete, move to phase 3
+                self.tank_event_phase = TankEventPhase.TANK_APPEARS
+                self.tank_event_timer = 0.0
+                self.tank = Tank()
+                self.tank.active = True
+                
+        # Phase 3: Tank appears and fires
+        elif self.tank_event_phase == TankEventPhase.TANK_APPEARS:
+            self.tank_event_timer += dt
+            if self.tank:
+                self.tank.update(dt)
+                
+                # Tank fires periodically
+                if self.tank.can_fire():
+                    self.tank.fire_timer += dt
+                    if self.tank.fire_timer >= Config.TANK_FIRE_INTERVAL:
+                        self.tank.fire_timer = 0.0
+                        # Spawn bullet
+                        bullet = Bullet(self.tank.x, self.tank.y - self.tank.height // 2 - 10)
+                        self.bullets.append(bullet)
+                        
+            # Update bullets
+            for bullet in self.bullets[:]:
+                bullet.update(dt)
+                if bullet.is_off_screen():
+                    self.bullets.remove(bullet)
+                    
+            # Check bullet collisions with player
+            player_hitbox = self.player.get_hitbox()
+            for bullet in self.bullets:
+                if player_hitbox.colliderect(bullet.get_hitbox()):
+                    self._game_over()
+                    return
+                    
+            # Check if wall should appear
+            if self.tank_event_timer >= Config.WALL_DELAY_AFTER_TANK:
+                self.tank_event_phase = TankEventPhase.WALL_APPROACHING
+                self.tank_event_timer = 0.0
+                self.wall = Wall()
+                self.wall.active = True
+                
+        # Phase 4: Wall approaching
+        elif self.tank_event_phase == TankEventPhase.WALL_APPROACHING:
+            self.tank_event_timer += dt
+            if self.wall:
+                self.wall.update(dt, self.current_speed)
+                
+            # Despawn enemies that collide with wall
+            if self.wall:
+                for enemy in self.spawner.enemies[:]:
+                    enemy_rect = pygame.Rect(
+                        enemy.x - enemy.width // 2,
+                        enemy.y - enemy.height // 2,
+                        enemy.width,
+                        enemy.height
+                    )
+                    if enemy_rect.colliderect(pygame.Rect(self.wall.x, self.wall.y, self.wall.width, self.wall.height)):
+                        self.spawner.enemies.remove(enemy)
+                        
+            # Check if player reached ramp
+            if self.wall:
+                player_rect = pygame.Rect(
+                    self.player.x - Config.PLAYER_WIDTH // 2,
+                    self.player.y - Config.PLAYER_HEIGHT // 2,
+                    Config.PLAYER_WIDTH,
+                    Config.PLAYER_HEIGHT
+                )
+                if player_rect.colliderect(self.wall.get_ramp_rect()):
+                    # Start jump sequence
+                    self.tank_event_phase = TankEventPhase.JUMP_SEQUENCE
+                    self.jump_start_y = self.player.y
+                    self.jump_elapsed = 0.0
+                    
+        # Phase 5: Jump sequence
+        elif self.tank_event_phase == TankEventPhase.JUMP_SEQUENCE:
+            self.jump_elapsed += dt
+            
+            if self.jump_elapsed <= Config.JUMP_DURATION:
+                # Parabolic jump arc
+                progress = self.jump_elapsed / Config.JUMP_DURATION
+                # Arc: goes up then down
+                arc_progress = 4 * progress * (1 - progress)  # Peaks at 0.5
+                self.player.y = self.jump_start_y - arc_progress * Config.JUMP_ARC_HEIGHT
+            else:
+                # Jump complete
+                self.player.y = self.jump_start_y
+                self.tank_event_phase = TankEventPhase.RETURN_AND_END
+                self.tank_event_timer = 0.0
+                # Clear bullets
+                self.bullets.clear()
+                # Tank explodes (visual only - just remove it)
+                self.tank = None
+                
+        # Phase 6: Return and end
+        elif self.tank_event_phase == TankEventPhase.RETURN_AND_END:
+            self.tank_event_timer += dt
+            # Move player back to normal position
+            target_y = Config.PLAYER_Y
+            if abs(self.player.y - target_y) > 1:
+                self.player.y += (target_y - self.player.y) * 5 * dt
+            else:
+                self.player.y = target_y
+                # Event complete
+                if self.tank_event_timer >= 0.5:
+                    self.last_tank_event_time = self.elapsed_time
+                    self.tank_event_phase = None
+                    self.event_escape_message = "Entkommen!"
+                    self.event_escape_timer = 2.0
+                    # Wall continues scrolling off screen
         
     def handle_events(self) -> bool:
         """Handle pygame events. Returns False if should quit."""
@@ -656,22 +1106,52 @@ class Game:
         # Update elapsed time
         self.elapsed_time += dt
         
+        # Check for tank event trigger
+        if self.tank_event_phase is None and self._check_trigger_tank_event(dt):
+            self._start_tank_event()
+            
+        # Update tank event if active
+        if self.tank_event_phase is not None:
+            self._update_tank_event(dt)
+            # During tank event, normal spawning is paused in some phases
+            if self.tank_event_phase in [TankEventPhase.TRIGGER_ANNOUNCEMENT, TankEventPhase.MOVE_TO_CENTER]:
+                # No spawning during these phases
+                pass
+            else:
+                # Normal spawning resumes after move to center
+                self.spawner.update(dt, self.current_speed, self.elapsed_time)
+        else:
+            # Normal spawning
+            self.spawner.update(dt, self.current_speed, self.elapsed_time)
+        
         # Update speed based on elapsed time
         self.current_speed = get_current_speed(self.elapsed_time)
         
         # Update road
         self.road.update(dt, self.current_speed)
         
-        # Handle player input and update
+        # Handle player input and update (input disabled during some tank event phases)
         keys = pygame.key.get_pressed()
-        self.player.handle_input(keys)
+        input_enabled = (self.tank_event_phase is None or 
+                        self.tank_event_phase in [TankEventPhase.TANK_APPEARS, TankEventPhase.WALL_APPROACHING])
+        self.player.handle_input(keys, input_enabled)
         self.player.update(dt)
         
         # Update enemies
-        self.spawner.update(dt, self.current_speed, self.elapsed_time)
         self.spawner.update_enemies(dt, self.current_speed)
         
-        # Check collisions
+        # Update wall if active
+        if self.wall and self.tank_event_phase is not None:
+            if self.tank_event_phase == TankEventPhase.WALL_APPROACHING:
+                self.wall.update(dt, self.current_speed)
+            elif self.tank_event_phase in [TankEventPhase.JUMP_SEQUENCE, TankEventPhase.RETURN_AND_END]:
+                self.wall.update(dt, self.current_speed)
+                
+        # Update escape message timer
+        if self.event_escape_timer > 0:
+            self.event_escape_timer -= dt
+            
+        # Check collisions with enemies
         player_hitbox = self.player.get_hitbox()
         for enemy in self.spawner.enemies:
             enemy_hitbox = enemy.get_hitbox()
@@ -752,6 +1232,36 @@ class Game:
         level_surf = self.font_small.render(level_text, True, Config.COLOR_HUD_TEXT)
         level_rect = level_surf.get_rect(topleft=(10, 10))
         self.screen.blit(level_surf, level_rect)
+        
+        # Tank event banner during phases 3-5
+        if self.tank_event_phase in [TankEventPhase.TANK_APPEARS, TankEventPhase.WALL_APPROACHING, TankEventPhase.JUMP_SEQUENCE]:
+            # Red banner at top
+            banner_rect = pygame.Rect(0, 50, Config.WINDOW_WIDTH, 40)
+            pygame.draw.rect(self.screen, (180, 50, 50), banner_rect)
+            banner_text = "⚠ PANZER-ANGRIFF"
+            banner_surf = self.font_medium.render(banner_text, True, Config.COLOR_LINE_WHITE)
+            banner_rect_text = banner_surf.get_rect(center=(Config.WINDOW_WIDTH // 2, 70))
+            self.screen.blit(banner_surf, banner_rect_text)
+            
+            # Countdown during wall approaching phase
+            if self.tank_event_phase == TankEventPhase.WALL_APPROACHING:
+                remaining = max(0, Config.WALL_DELAY_AFTER_TANK - self.tank_event_timer)
+                countdown_text = f"Mauer in: {remaining:.1f}s"
+                countdown_surf = self.font_small.render(countdown_text, True, Config.COLOR_LINE_WHITE)
+                countdown_rect = countdown_surf.get_rect(center=(Config.WINDOW_WIDTH // 2, 100))
+                self.screen.blit(countdown_surf, countdown_rect)
+        
+        # Escape message after event
+        if self.event_escape_timer > 0:
+            escape_surf = self.font_medium.render(self.event_escape_message, True, (50, 200, 50))
+            escape_rect = escape_surf.get_rect(center=(Config.WINDOW_WIDTH // 2, 100))
+            self.screen.blit(escape_surf, escape_rect)
+        
+        # Announcement text during phase 1
+        if self.tank_event_phase == TankEventPhase.TRIGGER_ANNOUNCEMENT and self.tank_announcement_timer > 0:
+            announce_surf = self.font_large.render(self.tank_announcement_text, True, (255, 50, 50))
+            announce_rect = announce_surf.get_rect(center=(Config.WINDOW_WIDTH // 2, Config.WINDOW_HEIGHT - 80))
+            self.screen.blit(announce_surf, announce_rect)
         
         # Speedometer (bottom right - vertical bar)
         speed_ratio = (self.current_speed - Config.BASE_SPEED) / (Config.MAX_SPEED - Config.BASE_SPEED)
@@ -880,6 +1390,20 @@ class Game:
                 
             # Draw player
             self.player.draw(self.screen)
+            
+            # Draw tank event objects
+            if self.tank_event_phase is not None:
+                # Draw tank
+                if self.tank and self.tank.active:
+                    self.tank.draw(self.screen)
+                    
+                # Draw bullets
+                for bullet in self.bullets:
+                    bullet.draw(self.screen)
+                    
+                # Draw wall
+                if self.wall and (self.wall.active or self.tank_event_phase in [TankEventPhase.WALL_APPROACHING, TankEventPhase.JUMP_SEQUENCE, TankEventPhase.RETURN_AND_END]):
+                    self.wall.draw(self.screen)
             
             # Draw HUD
             self.draw_hud()
