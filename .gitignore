@@ -1,1 +1,4 @@
-(oncoming_rush.py is a source file, so no files in the changes need to be ignored)
+```
+__pycache__/
+*.pyc
+```
