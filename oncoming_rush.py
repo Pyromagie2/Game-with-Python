@@ -34,6 +34,8 @@ class Config:
     COLOR_ENEMY_CAR = (200, 50, 50)
     COLOR_ENEMY_TRUCK = (200, 150, 50)
     COLOR_ENEMY_VAN = (150, 100, 200)
+    COLOR_ENEMY_TRACTOR = (60, 120, 40)
+    COLOR_ENEMY_MOPED = (180, 180, 180)
     COLOR_ENEMY_WINDSHIELD = (100, 100, 100)
     COLOR_HUD_TEXT = (255, 255, 255)
     COLOR_SPEEDOMETER_LOW = (50, 200, 50)
@@ -62,6 +64,10 @@ class Config:
     ENEMY_TRUCK_HEIGHT = 120
     ENEMY_VAN_WIDTH = 52
     ENEMY_VAN_HEIGHT = 95
+    ENEMY_TRACTOR_WIDTH = 58
+    ENEMY_TRACTOR_HEIGHT = 85
+    ENEMY_MOPED_WIDTH = 35
+    ENEMY_MOPED_HEIGHT = 60
     MIN_SPAWN_DISTANCE_SAME_LANE = 250  # Minimum pixels between enemies on same lane
     MIN_REACTION_TIME = 1.5  # seconds
     TOP_BLOCKED_ZONE_Y = 200  # y < this value must have at least 1 free lane
@@ -71,9 +77,11 @@ class Config:
     SPAWN_INTERVAL_MIN = 0.6    # Minimales Intervall bei Maximalgeschwindigkeit
     
     # Spawn probabilities (must sum to 1.0)
-    SPAWN_CHANCE_CAR = 0.65     # Wahrscheinlichkeit dass ein Spawn ein PKW ist
-    SPAWN_CHANCE_TRUCK = 0.25   # Wahrscheinlichkeit dass ein Spawn ein LKW ist
+    SPAWN_CHANCE_CAR = 0.55     # Wahrscheinlichkeit dass ein Spawn ein PKW ist
+    SPAWN_CHANCE_TRUCK = 0.20   # Wahrscheinlichkeit dass ein Spawn ein LKW ist
     SPAWN_CHANCE_VAN = 0.10     # Wahrscheinlichkeit dass ein Spawn ein Van ist
+    SPAWN_CHANCE_TRACTOR = 0.10 # Wahrscheinlichkeit dass ein Spawn ein Traktor ist
+    SPAWN_CHANCE_MOPED = 0.05   # Wahrscheinlichkeit dass ein Spawn ein Moped ist
     
     # Tank Event Configuration
     TANK_EVENT_CHANCE_PER_MINUTE = 0.25  # Wahrscheinlichkeit pro Minute dass Event startet (0.0–1.0)
@@ -479,6 +487,8 @@ class Enemy:
     TYPE_CAR = "car"
     TYPE_TRUCK = "truck"
     TYPE_VAN = "van"
+    TYPE_TRACTOR = "tractor"
+    TYPE_MOPED = "moped"
     
     def __init__(self, lane: int, enemy_type: str, spawn_y: float = -150):
         self.lane = lane
@@ -493,6 +503,14 @@ class Enemy:
             self.width = Config.ENEMY_VAN_WIDTH
             self.height = Config.ENEMY_VAN_HEIGHT
             self.color = Config.COLOR_ENEMY_VAN
+        elif enemy_type == self.TYPE_TRACTOR:
+            self.width = Config.ENEMY_TRACTOR_WIDTH
+            self.height = Config.ENEMY_TRACTOR_HEIGHT
+            self.color = Config.COLOR_ENEMY_TRACTOR
+        elif enemy_type == self.TYPE_MOPED:
+            self.width = Config.ENEMY_MOPED_WIDTH
+            self.height = Config.ENEMY_MOPED_HEIGHT
+            self.color = Config.COLOR_ENEMY_MOPED
         else:
             self.width = Config.ENEMY_CAR_WIDTH
             self.height = Config.ENEMY_CAR_HEIGHT
@@ -531,7 +549,7 @@ class Enemy:
         )
         pygame.draw.rect(screen, self.color, body_rect, border_radius=8)
         
-        # Windshield(s)
+        # Type-specific rendering
         if self.enemy_type == self.TYPE_TRUCK:
             # Truck has larger windshield at bottom (since it's coming toward us)
             windshield_rect = pygame.Rect(
@@ -549,6 +567,86 @@ class Enemy:
                                (self.x - self.width // 2 + 5, cargo_line_y),
                                (self.x + self.width // 2 - 5, cargo_line_y), 2)
                 cargo_line_y += 20
+                
+        elif self.enemy_type == self.TYPE_VAN:
+            # Van has rear doors pattern
+            windshield_rect = pygame.Rect(
+                self.x - self.width // 2 + 5,
+                self.y + self.height // 2 - 20,
+                self.width - 10,
+                15
+            )
+            pygame.draw.rect(screen, Config.COLOR_ENEMY_WINDSHIELD, windshield_rect, border_radius=3)
+            
+            # Van door lines
+            center_line_y = self.y - self.height // 2 + self.height // 2
+            pygame.draw.line(screen, (100, 80, 150),
+                           (self.x, self.y - self.height // 2 + 10),
+                           (self.x, self.y + self.height // 2 - 10), 2)
+                           
+        elif self.enemy_type == self.TYPE_TRACTOR:
+            # Tractor has large rear wheels and small front wheels
+            # Rear wheels (larger)
+            rear_wheel_width = 8
+            rear_wheel_height = 16
+            rear_wheel_positions = [
+                (self.x - self.width // 2 - 4, self.y + self.height // 2 - 20),
+                (self.x + self.width // 2 - rear_wheel_width + 4, self.y + self.height // 2 - 20),
+            ]
+            for wx, wy in rear_wheel_positions:
+                pygame.draw.rect(screen, Config.COLOR_PLAYER_WHEEL,
+                               (wx, wy, rear_wheel_width, rear_wheel_height), border_radius=4)
+            
+            # Front wheels (smaller)
+            front_wheel_width = 6
+            front_wheel_height = 10
+            front_wheel_positions = [
+                (self.x - self.width // 2 - 2, self.y - self.height // 2 + 15),
+                (self.x + self.width // 2 - front_wheel_width + 2, self.y - self.height // 2 + 15),
+            ]
+            for wx, wy in front_wheel_positions:
+                pygame.draw.rect(screen, Config.COLOR_PLAYER_WHEEL,
+                               (wx, wy, front_wheel_width, front_wheel_height), border_radius=2)
+            
+            # Tractor cabin
+            cabin_rect = pygame.Rect(
+                self.x - self.width // 2 + 8,
+                self.y - self.height // 2 + 10,
+                self.width - 16,
+                30
+            )
+            pygame.draw.rect(screen, (40, 100, 30), cabin_rect, border_radius=5)
+            
+        elif self.enemy_type == self.TYPE_MOPED:
+            # Moped is small with single headlight
+            headlight_rect = pygame.Rect(
+                self.x - 4,
+                self.y + self.height // 2 - 12,
+                8,
+                8
+            )
+            pygame.draw.circle(screen, (255, 255, 200), 
+                             (int(self.x), int(self.y + self.height // 2 - 8)), 4)
+            
+            # Handlebars
+            pygame.draw.line(screen, Config.COLOR_PLAYER_WHEEL,
+                           (self.x - self.width // 2 + 5, self.y + self.height // 2 - 15),
+                           (self.x + self.width // 2 - 5, self.y + self.height // 2 - 15), 3)
+            
+            # Small wheels
+            wheel_width = 4
+            wheel_height = 8
+            wheel_positions = [
+                (self.x - self.width // 2 - 2, self.y - self.height // 2 + 10),
+                (self.x + self.width // 2 - wheel_width + 2, self.y - self.height // 2 + 10),
+            ]
+            for wx, wy in wheel_positions:
+                pygame.draw.rect(screen, Config.COLOR_PLAYER_WHEEL,
+                               (wx, wy, wheel_width, wheel_height), border_radius=2)
+            
+            # Rider silhouette (simple circle)
+            pygame.draw.circle(screen, (50, 50, 50),
+                             (int(self.x), int(self.y - self.height // 2 + 15)), 6)
         else:
             # Car windshield at bottom
             windshield_rect = pygame.Rect(
@@ -559,19 +657,18 @@ class Enemy:
             )
             pygame.draw.rect(screen, Config.COLOR_ENEMY_WINDSHIELD, windshield_rect, border_radius=3)
             
-        # Wheels
-        wheel_width = 6
-        wheel_height = 10
-        wheel_positions = [
-            (self.x - self.width // 2 - 2, self.y - self.height // 2 + 12),
-            (self.x + self.width // 2 - wheel_width + 2, self.y - self.height // 2 + 12),
-            (self.x - self.width // 2 - 2, self.y + self.height // 2 - wheel_height - 12),
-            (self.x + self.width // 2 - wheel_width + 2, self.y + self.height // 2 - wheel_height - 12),
-        ]
-        
-        for wx, wy in wheel_positions:
-            pygame.draw.rect(screen, Config.COLOR_PLAYER_WHEEL,
-                           (wx, wy, wheel_width, wheel_height), border_radius=2)
+            # Standard car wheels
+            wheel_width = 6
+            wheel_height = 10
+            wheel_positions = [
+                (self.x - self.width // 2 - 2, self.y - self.height // 2 + 12),
+                (self.x + self.width // 2 - wheel_width + 2, self.y - self.height // 2 + 12),
+                (self.x - self.width // 2 - 2, self.y + self.height // 2 - wheel_height - 12),
+                (self.x + self.width // 2 - wheel_width + 2, self.y + self.height // 2 - wheel_height - 12),
+            ]
+            for wx, wy in wheel_positions:
+                pygame.draw.rect(screen, Config.COLOR_PLAYER_WHEEL,
+                               (wx, wy, wheel_width, wheel_height), border_radius=2)
 
 
 # =============================================================================
@@ -678,8 +775,12 @@ class EnemySpawner:
                 enemy_type = Enemy.TYPE_CAR
             elif rand_type < Config.SPAWN_CHANCE_CAR + Config.SPAWN_CHANCE_TRUCK:
                 enemy_type = Enemy.TYPE_TRUCK
-            else:
+            elif rand_type < Config.SPAWN_CHANCE_CAR + Config.SPAWN_CHANCE_TRUCK + Config.SPAWN_CHANCE_VAN:
                 enemy_type = Enemy.TYPE_VAN
+            elif rand_type < Config.SPAWN_CHANCE_CAR + Config.SPAWN_CHANCE_TRUCK + Config.SPAWN_CHANCE_VAN + Config.SPAWN_CHANCE_TRACTOR:
+                enemy_type = Enemy.TYPE_TRACTOR
+            else:
+                enemy_type = Enemy.TYPE_MOPED
                 
             enemy = Enemy(lane, enemy_type, spawn_y)
             self.last_spawn_positions[lane] = spawn_y
