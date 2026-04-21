@@ -21,7 +21,7 @@ class Config:
     # Road settings
     ROAD_WIDTH = 400
     ROAD_X = (WINDOW_WIDTH - ROAD_WIDTH) // 2  # Center the road
-    NUM_LANES = 3  # Configurable lane count
+    NUM_LANES = 5  # Configurable lane count
     LANE_WIDTH = ROAD_WIDTH // NUM_LANES
     
     # Colors
@@ -45,7 +45,7 @@ class Config:
     COLOR_HIGHSCORE_NEW = (255, 215, 0)
     
     # Speed settings
-    BASE_SPEED = 150  # px/s
+    BASE_SPEED = 200  # px/s
     MAX_SPEED = 1300  # px/s
     SPEED_CURVE_EXPONENT = 1.0  # Linear curve for steady difficulty increase
     SPEED_NORM_TIME = 60  # 1 minute - game reaches ~2x speed at this point
@@ -85,8 +85,8 @@ class Config:
     
     # Tank Event Configuration
     TANK_EVENT_CHANCE_PER_MINUTE = 0.25  # Wahrscheinlichkeit pro Minute dass Event startet (0.0–1.0)
-    TANK_EVENT_COOLDOWN = 120            # Sekunden Mindestabstand zwischen zwei Tank-Events
-    TANK_EVENT_EARLIEST = 180            # Frühester Zeitpunkt in Sekunden ab dem Event möglich ist
+    TANK_EVENT_COOLDOWN = 50          # Sekunden Mindestabstand zwischen zwei Tank-Events
+    TANK_EVENT_EARLIEST = 20           # Frühester Zeitpunkt in Sekunden ab dem Event möglich ist
     
     # Spieler-Bewegung im Event
     TANK_MOVE_TO_CENTER_DURATION = 1.5   # Sekunden für Fahrt zur Bildschirmmitte
@@ -133,9 +133,9 @@ class Config:
     
     # ── Event-System ──────────────────────────────
     EVENT_TRIGGER_CHANCE = 0.70          # 70% Chance dass überhaupt ein Event passiert
-    EVENT_CHECK_INTERVAL = 60            # Sekunden zwischen Event-Prüfungen
-    EVENT_GLOBAL_COOLDOWN = 90           # Sekunden Mindestabstand nach jedem Event
-    EVENT_EARLIEST = 120                 # Kein Event vor dieser Zeit (Sekunden)
+    EVENT_CHECK_INTERVAL = 5            # Sekunden zwischen Event-Prüfungen
+    EVENT_GLOBAL_COOLDOWN = 50           # Sekunden Mindestabstand nach jedem Event
+    EVENT_EARLIEST = 20                 # Kein Event vor dieser Zeit (Sekunden)
     
     # Gewichtung der einzelnen Events (müssen sich zu 1.0 addieren)
     EVENT_WEIGHT_TANK = 0.25
