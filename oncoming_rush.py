@@ -591,7 +591,7 @@ class Game:
         self.road.update(dt, self.current_speed)
         
         # Handle player input and update
-        keys = pygame.key.get_scancode()
+        keys = pygame.key.get_pressed()
         self.player.handle_input(keys)
         self.player.update(dt)
         
