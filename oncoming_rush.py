@@ -133,7 +133,6 @@ class Config:
     
     # ── Event-System ──────────────────────────────
     EVENT_TRIGGER_CHANCE = 0.70          # 70% Chance dass überhaupt ein Event passiert
-    EVENT_CHECK_INTERVAL = 5            # Sekunden zwischen Event-Prüfungen
     EVENT_GLOBAL_COOLDOWN = 50           # Sekunden Mindestabstand nach jedem Event
     EVENT_EARLIEST = 20                 # Kein Event vor dieser Zeit (Sekunden)
     
@@ -173,6 +172,32 @@ class Config:
     ASTEROID_NORMAL_SPAWN_FACTOR = 0.5   # Gegenverkehr-Spawn 50% langsamer während Event
     SCREEN_SHAKE_DURATION = 0.3          # Sekunden Shake-Dauer
     SCREEN_SHAKE_MAGNITUDE = 5           # Pixel Shake-Stärke
+    
+    # ── Tag/Nacht-Zyklus ──────────────────────────
+    DAY_NIGHT_CYCLE_DURATION = 120.0     # Sekunden für einen kompletten Tag-Nacht-Zyklus (Tag + Nacht)
+    NIGHT_START_RATIO = 0.5              # Bei 50% des Zyklus beginnt die Nacht
+    NIGHT_DURATION_RATIO = 0.4           # Nacht dauert 40% des Zyklus (48 Sekunden)
+    COLOR_SKY_DAY = (135, 206, 235)      # Hellblau für Tag
+    COLOR_SKY_DUSK = (255, 140, 90)      # Orange für Dämmerung
+    COLOR_SKY_NIGHT = (25, 25, 50)       # Dunkelblau für Nacht
+    HEADLIGHT_RANGE = 160                # Pixel – Reichweite der Scheinwerfer
+    HEADLIGHT_ANGLE = 45                 # Grad – Öffnungswinkel des Lichtkegels
+    HEADLIGHT_COLOR = (255, 255, 200, 180)  # Gelblich-weißer Lichtkegel
+    
+    # ── Autonomer Spurwechsel ─────────────────────
+    AUTONOMOUS_LANE_CHANGE_ENABLED = True  # Wenn True, können Gegner spurwechseln
+    AUTONOMOUS_LANE_CHANGE_DISTANCE = 2.0  # Wie viele Autolängen vor dem Spieler erkannt wird
+    AUTONOMOUS_LANE_CHANGE_CHANCE = 0.3    # Chance dass ein Auto tatsächlich wechselt wenn möglich
+    AUTONOMOUS_LANE_CHANGE_DURATION = 0.5  # Sekunden für Spurwechsel-Animation
+    
+    # ── Dekoration ─────────────────────────────────
+    DECORATION_TREE_COLOR = (34, 100, 34)
+    DECORATION_TREE_TRUNK_COLOR = (101, 67, 33)
+    DECORATION_BUSH_COLOR = (50, 150, 50)
+    DECORATION_FLOWER_COLORS = [(255, 100, 100), (255, 255, 100), (200, 100, 255), (255, 150, 50)]
+    
+    # ── Event-Timer ────────────────────────────────
+    EVENT_CHECK_INTERVAL = 30            # Sekunden zwischen Event-Prüfungen (alle 30 Sekunden ein Event)
 
 
 # =============================================================================
@@ -266,17 +291,133 @@ class Road:
     def __init__(self):
         self.line_offset = 0
         self.post_offset = 0
+        self.decorations = []  # Liste für Dekorationselemente (Bäume, Büsche, Blumen)
+        self.decoration_offset = 0
+        self._generate_decorations()
         
+    def _generate_decorations(self):
+        """Generiere zufällige Dekorationen für beide Seiten der Straße"""
+        import random
+        self.decorations = []
+        # Generiere Dekorationen in Abständen entlang der Straße
+        y_pos = -200
+        while y_pos < Config.WINDOW_HEIGHT + 200:
+            # Linke Seite
+            if random.random() < 0.7:  # 70% Chance für Dekoration
+                decor_type = random.choice(['tree', 'bush', 'flowers'])
+                x_offset = random.randint(20, 80)  # Abstand von der Straße
+                if decor_type == 'tree':
+                    size = random.randint(20, 35)
+                    self.decorations.append({'type': 'tree', 'x': -x_offset, 'y': y_pos, 'size': size})
+                elif decor_type == 'bush':
+                    size = random.randint(15, 25)
+                    self.decorations.append({'type': 'bush', 'x': -x_offset, 'y': y_pos, 'size': size})
+                else:  # flowers
+                    color = random.choice(Config.DECORATION_FLOWER_COLORS)
+                    self.decorations.append({'type': 'flowers', 'x': -x_offset, 'y': y_pos, 'color': color})
+            
+            # Rechte Seite
+            if random.random() < 0.7:  # 70% Chance für Dekoration
+                decor_type = random.choice(['tree', 'bush', 'flowers'])
+                x_offset = random.randint(20, 80)  # Abstand von der Straße
+                road_right = Config.ROAD_X + Config.ROAD_WIDTH
+                if decor_type == 'tree':
+                    size = random.randint(20, 35)
+                    self.decorations.append({'type': 'tree', 'x': road_right + x_offset, 'y': y_pos, 'size': size})
+                elif decor_type == 'bush':
+                    size = random.randint(15, 25)
+                    self.decorations.append({'type': 'bush', 'x': road_right + x_offset, 'y': y_pos, 'size': size})
+                else:  # flowers
+                    color = random.choice(Config.DECORATION_FLOWER_COLORS)
+                    self.decorations.append({'type': 'flowers', 'x': road_right + x_offset, 'y': y_pos, 'color': color})
+            
+            y_pos += random.randint(40, 80)  # Zufälliger Abstand zwischen Dekorationen
+    
     def update(self, dt: float, speed: float) -> None:
         """Update road scrolling based on speed"""
         scroll_amount = speed * dt
         self.line_offset = (self.line_offset + scroll_amount) % 80
         self.post_offset = (self.post_offset + scroll_amount) % 100
+        self.decoration_offset = (self.decoration_offset + scroll_amount)
+        
+        # Update decoration positions und regeneriere wenn nötig
+        for decor in self.decorations:
+            decor['y'] += scroll_amount
+        
+        # Regeneriere Dekorationen die aus dem Bild gescrollt sind
+        if self.decoration_offset >= 200:
+            self.decoration_offset = 0
+            # Entferne alte Dekorationen und füge neue hinzu
+            self.decorations = [d for d in self.decorations if d['y'] < Config.WINDOW_HEIGHT + 100]
+            # Füge neue Dekorationen oben hinzu
+            max_y = max([d['y'] for d in self.decorations], default=-200)
+            y_pos = max_y - random.randint(40, 80)
+            while y_pos > -200:
+                import random
+                # Linke Seite
+                if random.random() < 0.7:
+                    decor_type = random.choice(['tree', 'bush', 'flowers'])
+                    x_offset = random.randint(20, 80)
+                    if decor_type == 'tree':
+                        size = random.randint(20, 35)
+                        self.decorations.append({'type': 'tree', 'x': -x_offset, 'y': y_pos, 'size': size})
+                    elif decor_type == 'bush':
+                        size = random.randint(15, 25)
+                        self.decorations.append({'type': 'bush', 'x': -x_offset, 'y': y_pos, 'size': size})
+                    else:
+                        color = random.choice(Config.DECORATION_FLOWER_COLORS)
+                        self.decorations.append({'type': 'flowers', 'x': -x_offset, 'y': y_pos, 'color': color})
+                
+                # Rechte Seite
+                if random.random() < 0.7:
+                    decor_type = random.choice(['tree', 'bush', 'flowers'])
+                    x_offset = random.randint(20, 80)
+                    road_right = Config.ROAD_X + Config.ROAD_WIDTH
+                    if decor_type == 'tree':
+                        size = random.randint(20, 35)
+                        self.decorations.append({'type': 'tree', 'x': road_right + x_offset, 'y': y_pos, 'size': size})
+                    elif decor_type == 'bush':
+                        size = random.randint(15, 25)
+                        self.decorations.append({'type': 'bush', 'x': road_right + x_offset, 'y': y_pos, 'size': size})
+                    else:
+                        color = random.choice(Config.DECORATION_FLOWER_COLORS)
+                        self.decorations.append({'type': 'flowers', 'x': road_right + x_offset, 'y': y_pos, 'color': color})
+                
+                y_pos -= random.randint(40, 80)
         
     def draw(self, screen: pygame.Surface) -> None:
         """Draw the road with all markings"""
         # Draw grass background
         screen.fill(Config.COLOR_GRASS)
+        
+        # Draw decorations (trees, bushes, flowers) on both sides
+        for decor in self.decorations:
+            if decor['type'] == 'tree':
+                # Draw tree trunk
+                trunk_width = decor['size'] // 4
+                trunk_height = decor['size'] // 2
+                trunk_x = decor['x'] - trunk_width // 2
+                trunk_y = decor['y'] + decor['size'] // 2
+                pygame.draw.rect(screen, Config.DECORATION_TREE_TRUNK_COLOR, 
+                               (trunk_x, trunk_y, trunk_width, trunk_height))
+                # Draw tree crown (circle)
+                pygame.draw.circle(screen, Config.DECORATION_TREE_COLOR, 
+                                 (decor['x'], decor['y']), decor['size'] // 2)
+            elif decor['type'] == 'bush':
+                # Draw bush (ellipse-like shape using circle)
+                pygame.draw.circle(screen, Config.DECORATION_BUSH_COLOR, 
+                                 (decor['x'], decor['y']), decor['size'] // 2)
+                pygame.draw.circle(screen, Config.DECORATION_BUSH_COLOR, 
+                                 (decor['x'] - decor['size'] // 4, decor['y'] + 5), decor['size'] // 3)
+                pygame.draw.circle(screen, Config.DECORATION_BUSH_COLOR, 
+                                 (decor['x'] + decor['size'] // 4, decor['y'] + 5), decor['size'] // 3)
+            elif decor['type'] == 'flowers':
+                # Draw flower patch
+                flower_radius = 4
+                offsets = [(-8, -5), (0, -8), (8, -5), (-6, 5), (6, 5)]
+                for ox, oy in offsets:
+                    pygame.draw.circle(screen, decor['color'], 
+                                     (decor['x'] + ox, decor['y'] + oy), flower_radius)
         
         # Draw road surface
         road_rect = pygame.Rect(Config.ROAD_X, 0, Config.ROAD_WIDTH, Config.WINDOW_HEIGHT)
@@ -520,9 +661,53 @@ class Enemy:
         self.x = Config.ROAD_X + lane * Config.LANE_WIDTH + Config.LANE_WIDTH // 2
         self.y = spawn_y
         
-    def update(self, dt: float, speed: float) -> None:
-        """Move enemy downward with the road scroll speed"""
+        # Autonomous lane change properties
+        self.is_changing_lane = False
+        self.lane_change_progress = 0.0
+        self.target_lane = lane
+        self.lane_change_start_x = self.x
+        self.lane_change_end_x = self.x
+        
+    def update(self, dt: float, speed: float, player_y: float = None) -> None:
+        """Move enemy downward with the road scroll speed and handle autonomous lane changes"""
         self.y += speed * dt
+        
+        # Autonomous lane change logic (only if enabled and car is ahead of player)
+        if Config.AUTONOMOUS_LANE_CHANGE_ENABLED and player_y is not None:
+            # Check if car is within detection range (2 car lengths ahead of player)
+            detection_distance = Config.AUTONOMOUS_LANE_CHANGE_DISTANCE * self.height
+            if self.y > player_y - detection_distance and self.y < player_y:
+                # Car is in detection zone - may attempt lane change
+                import random
+                if not self.is_changing_lane and random.random() < Config.AUTONOMOUS_LANE_CHANGE_CHANCE:
+                    # Try to change to adjacent lane
+                    if self.lane > 0:
+                        self._start_lane_change(self.lane - 1)
+                    elif self.lane < Config.NUM_LANES - 1:
+                        self._start_lane_change(self.lane + 1)
+        
+        # Update lane change animation
+        if self.is_changing_lane:
+            self.lane_change_progress += dt / Config.AUTONOMOUS_LANE_CHANGE_DURATION
+            if self.lane_change_progress >= 1.0:
+                # Lane change complete
+                self.lane = self.target_lane
+                self.x = self.lane_change_end_x
+                self.is_changing_lane = False
+                self.lane_change_progress = 0.0
+            else:
+                # Smooth interpolation
+                t = self.lane_change_progress
+                eased_t = t * t * (3 - 2 * t)  # Smoothstep
+                self.x = self.lane_change_start_x + (self.lane_change_end_x - self.lane_change_start_x) * eased_t
+    
+    def _start_lane_change(self, target_lane: int) -> None:
+        """Start a lane change animation"""
+        self.target_lane = target_lane
+        self.is_changing_lane = True
+        self.lane_change_progress = 0.0
+        self.lane_change_start_x = self.x
+        self.lane_change_end_x = Config.ROAD_X + target_lane * Config.LANE_WIDTH + Config.LANE_WIDTH // 2
         
     def is_off_screen(self) -> bool:
         """Check if enemy has passed the bottom of the screen"""
@@ -843,10 +1028,10 @@ class EnemySpawner:
         
         return enemy
         
-    def update_enemies(self, dt: float, speed: float) -> None:
+    def update_enemies(self, dt: float, speed: float, player_y: float = None) -> None:
         """Update all enemies and remove off-screen ones"""
         for enemy in self.enemies[:]:
-            enemy.update(dt, speed)
+            enemy.update(dt, speed, player_y)
             if enemy.is_off_screen():
                 self.enemies.remove(enemy)
                 
@@ -1066,30 +1251,55 @@ class Game:
         self.jump_start_y = None
         self.jump_elapsed = 0.0
         
-    def _check_trigger_tank_event(self, dt: float) -> bool:
-        """Check if tank event should be triggered"""
-        # Only check every 60 seconds (once per minute)
-        if self.elapsed_time < 60:
-            return False
-            
+    def _check_trigger_event(self, dt: float) -> bool:
+        """Check if any event should be triggered (every 30 seconds)"""
+        import random
+        
         # Check cooldown and earliest time
         time_since_last = self.elapsed_time - self.last_tank_event_time
-        if time_since_last < Config.TANK_EVENT_COOLDOWN:
+        if time_since_last < Config.EVENT_GLOBAL_COOLDOWN:
             return False
-        if self.elapsed_time < Config.TANK_EVENT_EARLIEST:
+        if self.elapsed_time < Config.EVENT_EARLIEST:
             return False
-            
-        # Check if we're at a 60-second checkpoint (within this frame)
+        
+        # Check if we're at a 30-second checkpoint
         prev_time = self.elapsed_time - dt
-        prev_checkpoints = int(prev_time / 60)
-        curr_checkpoints = int(self.elapsed_time / 60)
+        prev_checkpoints = int(prev_time / Config.EVENT_CHECK_INTERVAL)
+        curr_checkpoints = int(self.elapsed_time / Config.EVENT_CHECK_INTERVAL)
         
         if curr_checkpoints > prev_checkpoints:
-            # We crossed a 60-second boundary - roll for event
-            import random
-            if random.random() < Config.TANK_EVENT_CHANCE_PER_MINUTE:
+            # We crossed a checkpoint boundary - roll for event
+            if random.random() < Config.EVENT_TRIGGER_CHANCE:
                 return True
         return False
+    
+    def _start_random_event(self) -> None:
+        """Start a random event (tank, fog, EMP, or asteroid)"""
+        import random
+        
+        # Choose event based on weights
+        events = ['tank', 'fog', 'emp', 'asteroid']
+        weights = [
+            Config.EVENT_WEIGHT_TANK,
+            Config.EVENT_WEIGHT_FOG,
+            Config.EVENT_WEIGHT_EMP,
+            Config.EVENT_WEIGHT_ASTEROID
+        ]
+        
+        chosen_event = random.choices(events, weights=weights)[0]
+        
+        if chosen_event == 'tank':
+            self._start_tank_event()
+        elif chosen_event == 'fog':
+            self._start_fog_event()
+        elif chosen_event == 'emp':
+            self._start_emp_event()
+        elif chosen_event == 'asteroid':
+            self._start_asteroid_event()
+    
+    def _check_trigger_tank_event(self, dt: float) -> bool:
+        """Check if tank event should be triggered (legacy function)"""
+        return self._check_trigger_event(dt)
         
     def _start_tank_event(self) -> None:
         """Start the tank event sequence"""
@@ -1269,10 +1479,10 @@ class Game:
         # Update elapsed time
         self.elapsed_time += dt
         
-        # Check for tank event trigger
-        if self.tank_event_phase is None and self._check_trigger_tank_event(dt):
-            self._start_tank_event()
-            
+        # Check for event trigger (every 30 seconds)
+        if self.tank_event_phase is None and self._check_trigger_event(dt):
+            self._start_random_event()
+        
         # Update tank event if active
         if self.tank_event_phase is not None:
             self._update_tank_event(dt)
@@ -1300,8 +1510,8 @@ class Game:
         self.player.handle_input(keys, input_enabled)
         self.player.update(dt)
         
-        # Update enemies
-        self.spawner.update_enemies(dt, self.current_speed)
+        # Update enemies with player position for autonomous lane changes
+        self.spawner.update_enemies(dt, self.current_speed, self.player.y)
         
         # Update wall if active
         if self.wall and self.tank_event_phase is not None:
