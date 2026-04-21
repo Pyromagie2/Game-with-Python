@@ -1321,25 +1321,9 @@ class Game:
     def _start_random_event(self) -> None:
         """Start a random event (tank, fog, EMP, or asteroid)"""
         
-        # Choose event based on weights
-        events = ['tank', 'fog', 'emp', 'asteroid']
-        weights = [
-            Config.EVENT_WEIGHT_TANK,
-            Config.EVENT_WEIGHT_FOG,
-            Config.EVENT_WEIGHT_EMP,
-            Config.EVENT_WEIGHT_ASTEROID
-        ]
-        
-        chosen_event = random.choices(events, weights=weights)[0]
-        
-        if chosen_event == 'tank':
-            self._start_tank_event()
-        elif chosen_event == 'fog':
-            self._start_fog_event()
-        elif chosen_event == 'emp':
-            self._start_emp_event()
-        elif chosen_event == 'asteroid':
-            self._start_asteroid_event()
+        # For now, only tank event is fully implemented
+        # Other events will be added in future iterations
+        self._start_tank_event()
     
     def _check_trigger_tank_event(self, dt: float) -> bool:
         """Check if tank event should be triggered (legacy function)"""
