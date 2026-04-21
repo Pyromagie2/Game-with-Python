@@ -6,6 +6,8 @@ Built with Pygame for Linux
 import pygame
 import json
 import os
+import random
+import math
 from enum import Enum, auto
 from typing import List, Optional
 
@@ -297,7 +299,6 @@ class Road:
         
     def _generate_decorations(self):
         """Generiere zufällige Dekorationen für beide Seiten der Straße"""
-        import random
         self.decorations = []
         # Generiere Dekorationen in Abständen entlang der Straße
         y_pos = -200
@@ -353,7 +354,6 @@ class Road:
             max_y = max([d['y'] for d in self.decorations], default=-200)
             y_pos = max_y - random.randint(40, 80)
             while y_pos > -200:
-                import random
                 # Linke Seite
                 if random.random() < 0.7:
                     decor_type = random.choice(['tree', 'bush', 'flowers'])
@@ -576,7 +576,7 @@ class Player:
         return pygame.Rect(x, y, width, height)
         
     def draw(self, screen: pygame.Surface) -> None:
-        """Draw the player car"""
+        """Draw the player car with headlights during night"""
         # Main body (rounded rectangle approximation)
         body_rect = pygame.Rect(
             self.x - Config.PLAYER_WIDTH // 2,
@@ -619,6 +619,20 @@ class Player:
         for wx, wy in wheel_positions:
             pygame.draw.rect(screen, Config.COLOR_PLAYER_WHEEL,
                            (wx, wy, wheel_width, wheel_height), border_radius=3)
+        
+        # Draw headlights (always on, visible during night)
+        headlight_left = pygame.Rect(
+            self.x - Config.PLAYER_WIDTH // 2 + 8,
+            self.y - Config.PLAYER_HEIGHT // 2 - 2,
+            10, 5
+        )
+        headlight_right = pygame.Rect(
+            self.x + Config.PLAYER_WIDTH // 2 - 18,
+            self.y - Config.PLAYER_HEIGHT // 2 - 2,
+            10, 5
+        )
+        pygame.draw.rect(screen, (255, 255, 200), headlight_left)
+        pygame.draw.rect(screen, (255, 255, 200), headlight_right)
 
 
 # =============================================================================
@@ -678,7 +692,6 @@ class Enemy:
             detection_distance = Config.AUTONOMOUS_LANE_CHANGE_DISTANCE * self.height
             if self.y > player_y - detection_distance and self.y < player_y:
                 # Car is in detection zone - may attempt lane change
-                import random
                 if not self.is_changing_lane and random.random() < Config.AUTONOMOUS_LANE_CHANGE_CHANCE:
                     # Try to change to adjacent lane
                     if self.lane > 0:
@@ -885,7 +898,6 @@ class EnemySpawner:
     
     def _try_spawn_multiple(self, speed: float, elapsed_time: float) -> List[Enemy]:
         """Try to spawn one or multiple enemies side by side"""
-        import random
         
         # Determine how many cars to spawn based on NUM_LANES
         # Must always leave at least 1 free lane (or NUM_LANES-2 for >=4 lanes)
@@ -1017,7 +1029,6 @@ class EnemySpawner:
             return None
             
         # Choose a random valid lane
-        import random
         chosen_lane = random.choice(valid_lanes)
         
         # Choose enemy type (20% chance for truck)
@@ -1253,7 +1264,6 @@ class Game:
         
     def _check_trigger_event(self, dt: float) -> bool:
         """Check if any event should be triggered (every 30 seconds)"""
-        import random
         
         # Check cooldown and earliest time
         time_since_last = self.elapsed_time - self.last_tank_event_time
@@ -1275,7 +1285,6 @@ class Game:
     
     def _start_random_event(self) -> None:
         """Start a random event (tank, fog, EMP, or asteroid)"""
-        import random
         
         # Choose event based on weights
         events = ['tank', 'fog', 'emp', 'asteroid']
