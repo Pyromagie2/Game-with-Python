@@ -130,8 +130,8 @@ class Config:
     # ── Tank (Spurwechsel) ────────────────────────
     TANK_LANE_CHANGE_INTERVAL = 2.2      # Sekunden zwischen Spurwechseln
     TANK_LANE_CHANGE_DURATION = 0.4      # Sekunden für die Spurwechsel-Animation
-    TANK_LANE_CHANGE_CHANCE = 0.75       # Wahrscheinlichkeit dass er bei Intervall tatsächlich wechselt
-    TANK_AIMS_AT_PLAYER = True           # True = wechselt bevorzugt auf Spieler-Spur
+    TANK_LANE_CHANGE_CHANCE = 1.0        # Panzer wechselt immer bei Intervall
+    TANK_AIMS_AT_PLAYER = False          # Panzer wechselt zufällig, nicht bevorzugt auf Spieler-Spur
     
     # ── Event-System ──────────────────────────────
     EVENT_TRIGGER_CHANCE = 0.70          # 70% Chance dass überhaupt ein Event passiert
@@ -189,7 +189,7 @@ class Config:
     # ── Autonomer Spurwechsel ─────────────────────
     AUTONOMOUS_LANE_CHANGE_ENABLED = True  # Wenn True, können Gegner spurwechseln
     AUTONOMOUS_LANE_CHANGE_DISTANCE = 2.0  # Wie viele Autolängen vor dem Spieler erkannt wird
-    AUTONOMOUS_LANE_CHANGE_CHANCE = 0.3    # Chance dass ein Auto tatsächlich wechselt wenn möglich
+    AUTONOMOUS_LANE_CHANGE_CHANCE = 0.33   # Nur 1/3 der Autos machen Spurwechsel
     AUTONOMOUS_LANE_CHANGE_DURATION = 0.5  # Sekunden für Spurwechsel-Animation
     
     # ── Dekoration ─────────────────────────────────
@@ -681,6 +681,8 @@ class Enemy:
         self.target_lane = lane
         self.lane_change_start_x = self.x
         self.lane_change_end_x = self.x
+        self.has_changed_lane = False  # Track if this car already changed lanes once
+        self.blink_timer = 0.0  # For blinker animation during lane change
         
     def update(self, dt: float, speed: float, player_y: float = None) -> None:
         """Move enemy downward with the road scroll speed and handle autonomous lane changes"""
@@ -692,33 +694,37 @@ class Enemy:
             detection_distance = Config.AUTONOMOUS_LANE_CHANGE_DISTANCE * self.height
             if self.y > player_y - detection_distance and self.y < player_y:
                 # Car is in detection zone - may attempt lane change
-                # Only allow lane change if not already changing
-                if not self.is_changing_lane and random.random() < Config.AUTONOMOUS_LANE_CHANGE_CHANCE:
-                    # Try to change to adjacent lane (only one lane at a time)
-                    direction = random.choice([-1, 1])
-                    new_lane = self.lane + direction
-                    
-                    # Check bounds
-                    if 0 <= new_lane < Config.NUM_LANES:
-                        # Check if target lane is free (no other enemy too close)
-                        lane_free = True
-                        for other in []:  # Will be passed from spawner
-                            if other.lane == new_lane and abs(other.y - self.y) < self.height * 1.5:
-                                lane_free = False
-                                break
+                # Only allow lane change if not already changing AND hasn't changed before
+                if not self.is_changing_lane and not self.has_changed_lane:
+                    if random.random() < Config.AUTONOMOUS_LANE_CHANGE_CHANCE:
+                        # Try to change to adjacent lane (only one lane at a time)
+                        direction = random.choice([-1, 1])
+                        new_lane = self.lane + direction
                         
-                        if lane_free:
-                            self._start_lane_change(new_lane)
+                        # Check bounds
+                        if 0 <= new_lane < Config.NUM_LANES:
+                            # Check if target lane is free (no other enemy too close)
+                            lane_free = True
+                            for other in []:  # Will be passed from spawner
+                                if other.lane == new_lane and abs(other.y - self.y) < self.height * 1.5:
+                                    lane_free = False
+                                    break
+                            
+                            if lane_free:
+                                self._start_lane_change(new_lane)
         
         # Update lane change animation
         if self.is_changing_lane:
             self.lane_change_progress += dt / Config.AUTONOMOUS_LANE_CHANGE_DURATION
+            self.blink_timer += dt
             if self.lane_change_progress >= 1.0:
                 # Lane change complete
                 self.lane = self.target_lane
                 self.x = self.lane_change_end_x
                 self.is_changing_lane = False
                 self.lane_change_progress = 0.0
+                self.has_changed_lane = True  # Mark that this car has changed lanes
+                self.blink_timer = 0.0
             else:
                 # Smooth interpolation
                 t = self.lane_change_progress
@@ -748,7 +754,7 @@ class Enemy:
         return pygame.Rect(x, y, width, height)
         
     def draw(self, screen: pygame.Surface) -> None:
-        """Draw the enemy vehicle"""
+        """Draw the enemy vehicle with blinker if changing lanes"""
         # Main body
         body_rect = pygame.Rect(
             self.x - self.width // 2,
@@ -757,6 +763,17 @@ class Enemy:
             self.height
         )
         pygame.draw.rect(screen, self.color, body_rect, border_radius=8)
+        
+        # Draw blinker if changing lanes
+        if self.is_changing_lane:
+            # Blink every 0.2 seconds
+            blink_on = (self.blink_timer % 0.4) < 0.2
+            if blink_on:
+                blinker_color = (255, 255, 0)  # Yellow blinker
+                blinker_side = 1 if self.target_lane > self.lane else -1
+                blinker_x = self.x + blinker_side * (self.width // 2 - 5)
+                blinker_rect = pygame.Rect(blinker_x - 3, self.y - 10, 6, 20)
+                pygame.draw.rect(screen, blinker_color, blinker_rect, border_radius=2)
         
         # Type-specific rendering
         if self.enemy_type == self.TYPE_TRUCK:
@@ -1133,26 +1150,19 @@ class Tank:
             self.current_lane = self.target_lane
             
     def _decide_lane_change(self, player_lane: int) -> None:
-        """Decide whether and where to change lanes"""
-        if random.random() > Config.TANK_LANE_CHANGE_CHANCE:
-            return
-            
-        if Config.TANK_AIMS_AT_PLAYER:
-            # Prefer player's lane
-            if random.random() < 0.6:  # 60% chance to aim at player
-                self.target_lane = player_lane
-            else:
-                # Random adjacent lane
-                direction = random.choice([-1, 1])
-                new_lane = self.current_lane + direction
-                if 0 <= new_lane < Config.NUM_LANES:
-                    self.target_lane = new_lane
-        else:
-            # Random lane change
-            direction = random.choice([-1, 1])
+        """Decide whether and where to change lanes - random left or right after each shot"""
+        # Always change lane (random direction)
+        direction = random.choice([-1, 1])
+        new_lane = self.current_lane + direction
+        
+        # If direction would go out of bounds, try the other direction
+        if not (0 <= new_lane < Config.NUM_LANES):
+            direction = -direction
             new_lane = self.current_lane + direction
-            if 0 <= new_lane < Config.NUM_LANES:
-                self.target_lane = new_lane
+        
+        # If still out of bounds, stay in current lane
+        if 0 <= new_lane < Config.NUM_LANES:
+            self.target_lane = new_lane
             
     def can_fire(self) -> bool:
         """Check if tank can fire"""
@@ -1723,15 +1733,28 @@ class Game:
         self.spawner.update_enemies(dt, self.current_speed, self.player.y)
         
         keys = pygame.key.get_pressed()
-        # Invert left/right controls
-        inverted_keys = keys.copy()
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+        # Invert left/right controls - convert to dict first since ScancodeWrapper has no copy()
+        inverted_keys = {}
+        for i in range(len(keys)):
+            inverted_keys[i] = keys[i]
+        left_pressed = keys[pygame.K_LEFT] or keys[pygame.K_a]
+        right_pressed = keys[pygame.K_RIGHT] or keys[pygame.K_d]
+        if left_pressed:
             inverted_keys[pygame.K_RIGHT] = True
             inverted_keys[pygame.K_d] = True
-        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+        if right_pressed:
             inverted_keys[pygame.K_LEFT] = True
             inverted_keys[pygame.K_a] = True
-        self.player.handle_input(inverted_keys, True)
+        # Create a wrapper that behaves like the original
+        class FakeKeys:
+            def __init__(self, d):
+                self._d = d
+            def __getitem__(self, key):
+                return self._d.get(key, False)
+            def __contains__(self, key):
+                return key in self._d
+        fake_keys = FakeKeys(inverted_keys)
+        self.player.handle_input(fake_keys, True)
         self.player.update(dt)
         
         # Check collisions
