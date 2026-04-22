@@ -1095,20 +1095,64 @@ class Tank:
     def __init__(self):
         self.width = Config.TANK_W
         self.height = Config.TANK_H
-        self.x = Config.ROAD_X + Config.ROAD_WIDTH // 2  # Center of road
+        # Start in random lane or center
+        self.current_lane = Config.NUM_LANES // 2
+        self.target_lane = self.current_lane
+        self.lane_change_timer = 0.0
+        self.x = self._get_lane_center_x(self.current_lane)
         self.y = Config.WINDOW_HEIGHT + self.height  # Start below screen
         self.target_y = Config.WINDOW_HEIGHT - 100  # Target position
         self.move_speed = Config.TANK_SPEED
         self.fire_timer = 0.0
         self.active = False
         
-    def update(self, dt: float) -> None:
-        """Move tank upward to target position"""
+    def _get_lane_center_x(self, lane: int) -> float:
+        """Calculate center X position for a given lane"""
+        return Config.ROAD_X + Config.LANE_WIDTH * lane + Config.LANE_WIDTH // 2
+        
+    def update(self, dt: float, player_lane: int) -> None:
+        """Move tank upward to target position and handle lane changes"""
         if not self.active:
             return
             
         if self.y > self.target_y:
             self.y -= self.move_speed * dt
+            
+        # Handle lane changes
+        self.lane_change_timer += dt
+        if self.lane_change_timer >= Config.TANK_LANE_CHANGE_INTERVAL:
+            self.lane_change_timer = 0.0
+            self._decide_lane_change(player_lane)
+            
+        # Animate lane change
+        target_x = self._get_lane_center_x(self.target_lane)
+        if abs(self.x - target_x) > 1:
+            self.x += (target_x - self.x) * Config.TANK_LANE_CHANGE_DURATION * 5 * dt
+        else:
+            self.x = target_x
+            self.current_lane = self.target_lane
+            
+    def _decide_lane_change(self, player_lane: int) -> None:
+        """Decide whether and where to change lanes"""
+        if random.random() > Config.TANK_LANE_CHANGE_CHANCE:
+            return
+            
+        if Config.TANK_AIMS_AT_PLAYER:
+            # Prefer player's lane
+            if random.random() < 0.6:  # 60% chance to aim at player
+                self.target_lane = player_lane
+            else:
+                # Random adjacent lane
+                direction = random.choice([-1, 1])
+                new_lane = self.current_lane + direction
+                if 0 <= new_lane < Config.NUM_LANES:
+                    self.target_lane = new_lane
+        else:
+            # Random lane change
+            direction = random.choice([-1, 1])
+            new_lane = self.current_lane + direction
+            if 0 <= new_lane < Config.NUM_LANES:
+                self.target_lane = new_lane
             
     def can_fire(self) -> bool:
         """Check if tank can fire"""
@@ -1321,9 +1365,48 @@ class Game:
     def _start_random_event(self) -> None:
         """Start a random event (tank, fog, EMP, or asteroid)"""
         
-        # For now, only tank event is fully implemented
-        # Other events will be added in future iterations
-        self._start_tank_event()
+        # Choose random event based on weights
+        rand = random.random()
+        cumulative = 0.0
+        
+        cumulative += Config.EVENT_WEIGHT_TANK
+        if rand < cumulative:
+            self._start_tank_event()
+            return
+            
+        cumulative += Config.EVENT_WEIGHT_FOG
+        if rand < cumulative:
+            self._start_fog_event()
+            return
+            
+        cumulative += Config.EVENT_WEIGHT_EMP
+        if rand < cumulative:
+            self._start_emp_event()
+            return
+            
+        # Default to asteroid event
+        self._start_asteroid_event()
+    
+    def _start_fog_event(self) -> None:
+        """Start fog event - reduced visibility"""
+        self.state = GameState.FOG_EVENT
+        self.fog_event_timer = 0.0
+        self.fog_alpha = 0
+        self.last_tank_event_time = self.elapsed_time
+        
+    def _start_emp_event(self) -> None:
+        """Start EMP event - inverted controls"""
+        self.state = GameState.EMP_EVENT
+        self.emp_event_timer = 0.0
+        self.emp_warning_timer = Config.EMP_WARNING_DURATION
+        self.last_tank_event_time = self.elapsed_time
+        
+    def _start_asteroid_event(self) -> None:
+        """Start asteroid event - meteor shower"""
+        self.state = GameState.ASTEROID_EVENT
+        self.asteroid_event_timer = 0.0
+        self.asteroid_warning_timer = Config.ASTEROID_WARNING_TIME
+        self.last_tank_event_time = self.elapsed_time
     
     def _check_trigger_tank_event(self, dt: float) -> bool:
         """Check if tank event should be triggered (legacy function)"""
@@ -1369,7 +1452,7 @@ class Game:
         elif self.tank_event_phase == TankEventPhase.TANK_APPEARS:
             self.tank_event_timer += dt
             if self.tank:
-                self.tank.update(dt)
+                self.tank.update(dt, self.player.current_lane)
                 
                 # Tank fires periodically
                 if self.tank.can_fire():
@@ -1418,7 +1501,7 @@ class Game:
                     if enemy_rect.colliderect(pygame.Rect(self.wall.x, self.wall.y, self.wall.width, self.wall.height)):
                         self.spawner.enemies.remove(enemy)
                         
-            # Check if player reached ramp
+            # Check if player reached ramp - allow jumping from any lane
             if self.wall:
                 player_rect = pygame.Rect(
                     self.player.x - Config.PLAYER_WIDTH // 2,
@@ -1426,7 +1509,9 @@ class Game:
                     Config.PLAYER_WIDTH,
                     Config.PLAYER_HEIGHT
                 )
-                if player_rect.colliderect(self.wall.get_ramp_rect()):
+                # Check collision with wall (any part of the wall, not just ramp)
+                wall_rect = pygame.Rect(self.wall.x, self.wall.y, self.wall.width, self.wall.height)
+                if player_rect.colliderect(wall_rect):
                     # Start jump sequence
                     self.tank_event_phase = TankEventPhase.JUMP_SEQUENCE
                     self.jump_start_y = self.player.y
@@ -1501,9 +1586,17 @@ class Game:
         
     def update(self, dt: float) -> None:
         """Update game logic"""
-        if self.state != GameState.PLAYING:
-            return
+        if self.state == GameState.PLAYING:
+            self._update_playing(dt)
+        elif self.state == GameState.FOG_EVENT:
+            self._update_fog_event(dt)
+        elif self.state == GameState.EMP_EVENT:
+            self._update_emp_event(dt)
+        elif self.state == GameState.ASTEROID_EVENT:
+            self._update_asteroid_event(dt)
             
+    def _update_playing(self, dt: float) -> None:
+        """Update normal playing state"""
         # Update elapsed time
         self.elapsed_time += dt
         
@@ -1557,6 +1650,135 @@ class Game:
         for enemy in self.spawner.enemies:
             enemy_hitbox = enemy.get_hitbox()
             if player_hitbox.colliderect(enemy_hitbox):
+                self._game_over()
+                break
+                
+    def _update_fog_event(self, dt: float) -> None:
+        """Update fog event state"""
+        self.fog_event_timer += dt
+        
+        # Fade in
+        if self.fog_event_timer < Config.FOG_FADE_IN_DURATION:
+            progress = self.fog_event_timer / Config.FOG_FADE_IN_DURATION
+            self.fog_alpha = int(progress * Config.FOG_ALPHA_MAX)
+        elif self.fog_event_timer < Config.FOG_DURATION - Config.FOG_FADE_OUT_DURATION:
+            self.fog_alpha = Config.FOG_ALPHA_MAX
+        else:
+            # Fade out
+            remaining = Config.FOG_DURATION - self.fog_event_timer
+            progress = remaining / Config.FOG_FADE_OUT_DURATION
+            self.fog_alpha = int(progress * Config.FOG_ALPHA_MAX)
+            
+        # End event
+        if self.fog_event_timer >= Config.FOG_DURATION:
+            self.state = GameState.PLAYING
+            self.last_tank_event_time = self.elapsed_time
+            
+        # Update game objects with reduced spawn rate
+        self.elapsed_time += dt
+        self.current_speed = get_current_speed(self.elapsed_time)
+        self.road.update(dt, self.current_speed * Config.FOG_SPAWN_RATE_FACTOR)
+        self.spawner.update(dt * Config.FOG_SPAWN_RATE_FACTOR, self.current_speed, self.elapsed_time)
+        self.spawner.update_enemies(dt, self.current_speed, self.player.y)
+        
+        keys = pygame.key.get_pressed()
+        self.player.handle_input(keys, True)
+        self.player.update(dt)
+        
+        # Check collisions
+        player_hitbox = self.player.get_hitbox()
+        for enemy in self.spawner.enemies:
+            if player_hitbox.colliderect(enemy.get_hitbox()):
+                self._game_over()
+                break
+                
+    def _update_emp_event(self, dt: float) -> None:
+        """Update EMP event state"""
+        # Warning phase
+        if self.emp_warning_timer > 0:
+            self.emp_warning_timer -= dt
+            self.elapsed_time += dt
+            self.current_speed = get_current_speed(self.elapsed_time)
+            self.road.update(dt, self.current_speed)
+            self.spawner.update(dt * Config.EMP_SPAWN_RATE_FACTOR, self.current_speed, self.elapsed_time)
+            self.spawner.update_enemies(dt, self.current_speed, self.player.y)
+            keys = pygame.key.get_pressed()
+            self.player.handle_input(keys, True)
+            self.player.update(dt)
+            return
+            
+        # Inverted controls phase
+        self.emp_event_timer += dt
+        
+        if self.emp_event_timer >= Config.EMP_DURATION:
+            self.state = GameState.PLAYING
+            self.last_tank_event_time = self.elapsed_time
+            return
+            
+        # Update game objects with inverted controls
+        self.elapsed_time += dt
+        self.current_speed = get_current_speed(self.elapsed_time)
+        self.road.update(dt, self.current_speed)
+        self.spawner.update(dt * Config.EMP_SPAWN_RATE_FACTOR, self.current_speed, self.elapsed_time)
+        self.spawner.update_enemies(dt, self.current_speed, self.player.y)
+        
+        keys = pygame.key.get_pressed()
+        # Invert left/right controls
+        inverted_keys = keys.copy()
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+            inverted_keys[pygame.K_RIGHT] = True
+            inverted_keys[pygame.K_d] = True
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+            inverted_keys[pygame.K_LEFT] = True
+            inverted_keys[pygame.K_a] = True
+        self.player.handle_input(inverted_keys, True)
+        self.player.update(dt)
+        
+        # Check collisions
+        player_hitbox = self.player.get_hitbox()
+        for enemy in self.spawner.enemies:
+            if player_hitbox.colliderect(enemy.get_hitbox()):
+                self._game_over()
+                break
+                
+    def _update_asteroid_event(self, dt: float) -> None:
+        """Update asteroid event state"""
+        # Warning phase
+        if self.asteroid_warning_timer > 0:
+            self.asteroid_warning_timer -= dt
+            self.elapsed_time += dt
+            self.current_speed = get_current_speed(self.elapsed_time)
+            self.road.update(dt, self.current_speed)
+            self.spawner.update(dt * Config.ASTEROID_NORMAL_SPAWN_FACTOR, self.current_speed, self.elapsed_time)
+            self.spawner.update_enemies(dt, self.current_speed, self.player.y)
+            keys = pygame.key.get_pressed()
+            self.player.handle_input(keys, True)
+            self.player.update(dt)
+            return
+            
+        # Asteroid shower phase
+        self.asteroid_event_timer += dt
+        
+        if self.asteroid_event_timer >= Config.ASTEROID_EVENT_DURATION:
+            self.state = GameState.PLAYING
+            self.last_tank_event_time = self.elapsed_time
+            return
+            
+        # Update game objects
+        self.elapsed_time += dt
+        self.current_speed = get_current_speed(self.elapsed_time)
+        self.road.update(dt, self.current_speed)
+        self.spawner.update(dt * Config.ASTEROID_NORMAL_SPAWN_FACTOR, self.current_speed, self.elapsed_time)
+        self.spawner.update_enemies(dt, self.current_speed, self.player.y)
+        
+        keys = pygame.key.get_pressed()
+        self.player.handle_input(keys, True)
+        self.player.update(dt)
+        
+        # Check collisions
+        player_hitbox = self.player.get_hitbox()
+        for enemy in self.spawner.enemies:
+            if player_hitbox.colliderect(enemy.get_hitbox()):
                 self._game_over()
                 break
                 
@@ -1813,11 +2035,58 @@ class Game:
                 self.draw_pause()
             elif self.state == GameState.GAMEOVER:
                 self.draw_gameover()
+            elif self.state == GameState.FOG_EVENT:
+                self._draw_fog_overlay()
+            elif self.state == GameState.EMP_EVENT:
+                self._draw_emp_overlay()
+            elif self.state == GameState.ASTEROID_EVENT:
+                self._draw_asteroid_overlay()
                 
         # Scale and display
         scaled = pygame.transform.scale(self.screen, (Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT))
         self.window.blit(scaled, (0, 0))
         pygame.display.flip()
+        
+    def _draw_fog_overlay(self) -> None:
+        """Draw fog overlay with limited visibility"""
+        # Create fog surface
+        fog_surface = pygame.Surface((Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT), pygame.SRCALPHA)
+        fog_surface.fill((*Config.FOG_COLOR, self.fog_alpha))
+        
+        # Create visibility hole around player
+        player_screen_x = self.player.x
+        player_screen_y = self.player.y
+        
+        # Use mask to create circular hole
+        mask = pygame.Surface((Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT), pygame.SRCALPHA)
+        pygame.draw.circle(mask, (0, 0, 0, 255), (int(player_screen_x), int(player_screen_y)), Config.FOG_VISIBILITY_RADIUS)
+        
+        # Combine fog with mask
+        fog_surface.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_SUB)
+        
+        self.screen.blit(fog_surface, (0, 0))
+        
+    def _draw_emp_overlay(self) -> None:
+        """Draw EMP visual effects"""
+        # Blue tint overlay
+        emp_surface = pygame.Surface((Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT), pygame.SRCALPHA)
+        emp_surface.fill((*Config.EMP_SCREEN_TINT_COLOR, Config.EMP_SCREEN_TINT_ALPHA))
+        self.screen.blit(emp_surface, (0, 0))
+        
+        # Flicker effect during warning
+        if hasattr(self, 'emp_warning_timer') and self.emp_warning_timer > 0:
+            if int(pygame.time.get_ticks() / (Config.EMP_FLASH_INTERVAL * 1000)) % 2 == 0:
+                flash_surface = pygame.Surface((Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT), pygame.SRCALPHA)
+                flash_surface.fill((255, 255, 255, 100))
+                self.screen.blit(flash_surface, (0, 0))
+                
+    def _draw_asteroid_overlay(self) -> None:
+        """Draw asteroid event visual effects"""
+        # Red warning tint during warning phase
+        if hasattr(self, 'asteroid_warning_timer') and self.asteroid_warning_timer > 0:
+            warning_surface = pygame.Surface((Config.WINDOW_WIDTH, Config.WINDOW_HEIGHT), pygame.SRCALPHA)
+            warning_surface.fill((255, 100, 0, 50))
+            self.screen.blit(warning_surface, (0, 0))
         
     def run(self) -> None:
         """Main game loop"""
